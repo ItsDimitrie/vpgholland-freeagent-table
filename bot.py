@@ -244,6 +244,11 @@ async def build_embeds(guild):
         color=EMBED_COLOR
     )
 
+    if guild.icon:
+        current_embed.set_thumbnail(
+            url=guild.icon.url
+        )
+
     current_embed.add_field(
         name="Aantal Free Agents",
         value=str(len(free_agents)),
@@ -267,6 +272,11 @@ async def build_embeds(guild):
             current_embed = discord.Embed(
                 title=f"{EMBED_TITLE} (cont.)",
                 color=EMBED_COLOR
+            )
+
+            if guild.icon:
+                current_embed.set_thumbnail(
+                url=guild.icon.url
             )
 
             current_embed.add_field(
@@ -306,7 +316,7 @@ class RoleToggleView(discord.ui.View):
 
     @discord.ui.button(
         label=BUTTON_LABEL,
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.danger,
         custom_id="persistent_role_toggle_button"
     )
     async def toggle_role(
