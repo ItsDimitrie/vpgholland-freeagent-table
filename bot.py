@@ -191,7 +191,7 @@ async def build_embeds(guild):
 
         parts = split_text(value)
 
-        header_name = f"{label} {role.mention}"
+        header_name = f"{label}"
 
         for idx, part in enumerate(parts, start=1):
 
@@ -390,7 +390,11 @@ async def get_or_create_leaderboard_message(guild):
 
     message = await channel.send(
         embeds=embeds,
-        view=RoleToggleView()
+        view=RoleToggleView(),
+        allowed_mentions=discord.AllowedMentions(
+            roles=True,
+            users=True
+        )
     )
 
     MESSAGE_ID = message.id
@@ -421,10 +425,14 @@ async def refresh_leaderboard_message(guild):
             guild
         )
 
-        await message.edit(
-            embeds=embeds,
-            view=RoleToggleView()
+    await message.edit(
+        embeds=embeds,
+        view=RoleToggleView(),
+        allowed_mentions=discord.AllowedMentions(
+            roles=True,
+            users=True
         )
+    )
 
 
 @tasks.loop(minutes=5)
