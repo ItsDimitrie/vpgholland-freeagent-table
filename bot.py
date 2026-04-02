@@ -57,7 +57,7 @@ def footer_text():
         return "Refreshed elke 5 minuten"
 
     return (
-        "Refreshed elke 5 minuten " + "© VPG Holland 2026" + "Vragen? Stel ze via de @staflid rol!"
+        "Refreshed elke 5 minuten • " + "© VPG Holland 2026 • " + "Vragen? Stel ze via de @staflid rol! • "
         f" • Last refresh: {LAST_REFRESH_TIME.strftime('%H:%M:%S UTC')}"
     )
 
