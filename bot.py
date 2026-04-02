@@ -54,10 +54,10 @@ refresh_lock = asyncio.Lock()
 def footer_text():
 
     if LAST_REFRESH_TIME is None:
-        return "Auto-refreshes every 5 minutes"
+        return "Refreshed elke 5 minuten"
 
     return (
-        "Auto-refreshes every 5 minutes"
+        "Refreshed elke 5 minuten " + "© VPG Holland 2026" + "Vragen? Stel ze via de @staflid rol!"
         f" • Last refresh: {LAST_REFRESH_TIME.strftime('%H:%M:%S UTC')}"
     )
 
