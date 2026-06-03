@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ MESSAGE_ID = int(os.getenv("MESSAGE_ID", "0"))
 EMBED_TITLE = os.getenv("EMBED_TITLE", "VPG Holland Free Agents")
 BUTTON_LABEL = os.getenv("BUTTON_LABEL", "Bewerk je Free Agent rol")
 CSV_PATH = os.getenv("CSV_PATH", "data.csv")
+MESSAGES_FILE = "message_ids.json"
 
 POSITION_ROLE_IDS = [
     int(x.strip())
@@ -60,6 +62,27 @@ def footer_text():
         "Refreshed elke 5 minuten • " + "© VPG Holland 2026 • " + "Vragen? Stel ze via de @staflid rol! • "
         f" • Last refresh: {LAST_REFRESH_TIME.strftime('%H:%M:%S UTC')}"
     )
+
+
+def load_message_ids():
+    try:
+        with open(MESSAGES_FILE) as f:
+            ids = json.load(f)
+            if isinstance(ids, list) and ids:
+                return ids
+    except Exception:
+        pass
+    if MESSAGE_ID:
+        return [MESSAGE_ID]
+    return []
+
+
+def save_message_ids(ids):
+    try:
+        with open(MESSAGES_FILE, "w") as f:
+            json.dump(ids, f)
+    except Exception:
+        log.exception("Failed to save message IDs")
 
 
 def export_members_csv(members):
@@ -113,8 +136,8 @@ def format_member_line(member):
     )
 
 
-def embed_size(embed):
-    total = len(embed.title or "") + len(embed.footer.text if embed.footer else "")
+def embed_char_count(embed):
+    total = len(embed.title or "")
     for field in embed.fields:
         total += len(field.name) + len(field.value)
     return total
@@ -213,7 +236,7 @@ async def build_embeds(guild):
             )
 
         grouped_fields.append(
-            ("──────────────", "\u200b")
+            ("──────────────", "​")
         )
 
     no_position = [
@@ -267,17 +290,14 @@ async def build_embeds(guild):
     for name, value in grouped_fields:
 
         field_chars = len(name) + len(value)
-        would_exceed = embed_size(current_embed) + len(footer) + field_chars > 5800
+        # Each embed is sent as its own message so the 6000-char cap is per embed.
+        # Keep a 200-char buffer for the footer that gets appended on close.
+        would_exceed = embed_char_count(current_embed) + len(footer) + field_chars > 5800
 
         if field_count >= 25 or would_exceed:
 
-            current_embed.set_footer(
-                text=footer
-            )
-
-            embeds.append(
-                current_embed
-            )
+            current_embed.set_footer(text=footer)
+            embeds.append(current_embed)
 
             current_embed = discord.Embed(
                 title=f"{EMBED_TITLE} (cont.)",
@@ -285,9 +305,7 @@ async def build_embeds(guild):
             )
 
             if guild.icon:
-                current_embed.set_thumbnail(
-                url=guild.icon.url
-            )
+                current_embed.set_thumbnail(url=guild.icon.url)
 
             current_embed.add_field(
                 name="Total members",
@@ -305,13 +323,8 @@ async def build_embeds(guild):
 
         field_count += 1
 
-    current_embed.set_footer(
-        text=footer
-    )
-
-    embeds.append(
-        current_embed
-    )
+    current_embed.set_footer(text=footer)
+    embeds.append(current_embed)
 
     return embeds
 
@@ -384,75 +397,58 @@ async def get_target_channel(guild):
     return channel
 
 
-async def get_or_create_leaderboard_message(guild):
-
-    global MESSAGE_ID
-
-    channel = await get_target_channel(
-        guild
-    )
-
-    if MESSAGE_ID:
-
-        try:
-
-            return await channel.fetch_message(
-                MESSAGE_ID
-            )
-
-        except Exception:
-
-            pass
-
-    embeds = await build_embeds(
-        guild
-    )
-
-    message = await channel.send(
-        embeds=embeds,
-        view=RoleToggleView(),
-        allowed_mentions=discord.AllowedMentions(
-            roles=True,
-            users=True
-        )
-    )
-
-    MESSAGE_ID = message.id
-
-    log.warning(
-        "Created message ID %s",
-        MESSAGE_ID
-    )
-
-    return message
-
-
 async def refresh_leaderboard_message(guild):
+    """Send one Discord message per embed so we never hit the 6000-char per-message limit."""
 
     global LAST_REFRESH_TIME
 
     async with refresh_lock:
 
-        LAST_REFRESH_TIME = datetime.now(
-            timezone.utc
-        )
+        LAST_REFRESH_TIME = datetime.now(timezone.utc)
 
-        message = await get_or_create_leaderboard_message(
-            guild
-        )
+        channel = await get_target_channel(guild)
+        embeds = await build_embeds(guild)
+        stored_ids = load_message_ids()
 
-        embeds = await build_embeds(
-            guild
-        )
+        # Fetch whatever messages we already own.
+        existing = []
+        for mid in stored_ids:
+            try:
+                existing.append(await channel.fetch_message(mid))
+            except Exception:
+                pass
 
-    await message.edit(
-        embeds=embeds,
-        view=RoleToggleView(),
-        allowed_mentions=discord.AllowedMentions(
-            roles=True,
-            users=True
-        )
-    )
+        new_ids = []
+
+        # Edit or send messages for each embed.
+        for i, embed in enumerate(embeds):
+            view = RoleToggleView() if i == 0 else None
+            mentions = discord.AllowedMentions(roles=True, users=True)
+
+            if i < len(existing):
+                await existing[i].edit(
+                    embed=embed,
+                    view=view,
+                    allowed_mentions=mentions
+                )
+                new_ids.append(existing[i].id)
+            else:
+                msg = await channel.send(
+                    embed=embed,
+                    view=view,
+                    allowed_mentions=mentions
+                )
+                new_ids.append(msg.id)
+                log.info("Sent new leaderboard message ID %s", msg.id)
+
+        # Delete any surplus messages from a previous run that had more pages.
+        for msg in existing[len(embeds):]:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
+        save_message_ids(new_ids)
 
 
 @tasks.loop(minutes=5)
