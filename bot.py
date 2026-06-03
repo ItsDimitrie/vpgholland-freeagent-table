@@ -113,6 +113,13 @@ def format_member_line(member):
     )
 
 
+def embed_size(embed):
+    total = len(embed.title or "") + len(embed.footer.text if embed.footer else "")
+    for field in embed.fields:
+        total += len(field.name) + len(field.value)
+    return total
+
+
 def split_text(text, limit=1024):
 
     if len(text) <= limit:
@@ -259,7 +266,10 @@ async def build_embeds(guild):
 
     for name, value in grouped_fields:
 
-        if field_count >= 25:
+        field_chars = len(name) + len(value)
+        would_exceed = embed_size(current_embed) + len(footer) + field_chars > 5800
+
+        if field_count >= 25 or would_exceed:
 
             current_embed.set_footer(
                 text=footer
