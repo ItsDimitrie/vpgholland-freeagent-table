@@ -397,6 +397,37 @@ async def get_target_channel(guild):
     return channel
 
 
+async def find_leaderboard_messages(channel):
+    """Scan channel history for messages posted by this bot with leaderboard embeds."""
+    found = []
+    async for msg in channel.history(limit=100):
+        if msg.author.id == bot.user.id and msg.embeds:
+            title = msg.embeds[0].title or ""
+            if EMBED_TITLE in title:
+                found.append(msg)
+    found.sort(key=lambda m: m.created_at)
+    return found
+
+
+async def fetch_stored_messages(channel):
+    """Return existing leaderboard messages, falling back to a channel scan."""
+    stored_ids = load_message_ids()
+    existing = []
+    for mid in stored_ids:
+        try:
+            existing.append(await channel.fetch_message(mid))
+        except Exception:
+            pass
+
+    if not existing:
+        existing = await find_leaderboard_messages(channel)
+        if existing:
+            save_message_ids([m.id for m in existing])
+            log.info("Recovered %d leaderboard message(s) from channel history", len(existing))
+
+    return existing
+
+
 async def refresh_leaderboard_message(guild):
     """Send one Discord message per embed so we never hit the 6000-char per-message limit."""
 
@@ -408,19 +439,11 @@ async def refresh_leaderboard_message(guild):
 
         channel = await get_target_channel(guild)
         embeds = await build_embeds(guild)
-        stored_ids = load_message_ids()
-
-        # Fetch whatever messages we already own.
-        existing = []
-        for mid in stored_ids:
-            try:
-                existing.append(await channel.fetch_message(mid))
-            except Exception:
-                pass
+        existing = await fetch_stored_messages(channel)
 
         new_ids = []
 
-        # Edit or send messages for each embed.
+        # Edit existing messages or send new ones.
         for i, embed in enumerate(embeds):
             view = RoleToggleView() if i == 0 else None
             mentions = discord.AllowedMentions(roles=True, users=True)
@@ -441,7 +464,7 @@ async def refresh_leaderboard_message(guild):
                 new_ids.append(msg.id)
                 log.info("Sent new leaderboard message ID %s", msg.id)
 
-        # Delete any surplus messages from a previous run that had more pages.
+        # Delete surplus messages left over from previous runs with more pages.
         for msg in existing[len(embeds):]:
             try:
                 await msg.delete()
@@ -463,6 +486,46 @@ async def periodic_refresh():
         await refresh_leaderboard_message(
             guild
         )
+
+
+async def cleanup_duplicate_messages(channel):
+    """Delete duplicate leaderboard messages, keeping only the oldest run."""
+    all_msgs = []
+    async for msg in channel.history(limit=100):
+        if msg.author.id == bot.user.id and msg.embeds:
+            title = msg.embeds[0].title or ""
+            if EMBED_TITLE in title:
+                all_msgs.append(msg)
+
+    if not all_msgs:
+        return
+
+    all_msgs.sort(key=lambda m: m.created_at)
+
+    # Identify contiguous "runs" of bot messages (grouped by proximity in time).
+    runs = [[all_msgs[0]]]
+    for msg in all_msgs[1:]:
+        gap = (msg.created_at - runs[-1][-1].created_at).total_seconds()
+        if gap < 30:
+            runs[-1].append(msg)
+        else:
+            runs.append([msg])
+
+    if len(runs) <= 1:
+        return
+
+    log.warning("Found %d duplicate leaderboard run(s), cleaning up", len(runs) - 1)
+
+    # Keep the most recent run, delete all older ones.
+    for run in runs[:-1]:
+        for msg in run:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
+    # Save IDs of the surviving run.
+    save_message_ids([m.id for m in runs[-1]])
 
 
 @bot.event
@@ -493,6 +556,8 @@ async def on_ready():
 
     if guild:
 
+        channel = await get_target_channel(guild)
+        await cleanup_duplicate_messages(channel)
         await refresh_leaderboard_message(
             guild
         )
